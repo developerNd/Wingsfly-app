@@ -88,6 +88,8 @@ export type RootStackParamList = {
   TeamManagement: { goalId: number | null };
   Leaderboard: undefined;
   Routines: undefined;
+  AppLock: undefined;
+  Permissions: undefined;
 };
 
 declare global {

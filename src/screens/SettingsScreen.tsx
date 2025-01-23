@@ -16,6 +16,8 @@ const SettingsScreen = () => {
     { id: 4, title: 'Privacy & Security', icon: 'security' },
     { id: 5, title: 'Help & Support', icon: 'help-outline' },
     { id: 6, title: 'About', icon: 'info-outline' },
+    { id: 7, title: 'App Lock', icon: 'lock-outline' },
+    { id: 8, title: 'Permissions', icon: 'admin-panel-settings' },
   ];
 
   const handleLogout = async () => {
@@ -27,6 +29,18 @@ const SettingsScreen = () => {
     }
   };
 
+  const handleOptionPress = (id: number) => {
+    switch (id) {
+      case 7:
+        navigation.navigate('AppLock');
+        break;
+      case 8:
+        navigation.navigate('Permissions');
+        break;
+      // ... handle other options
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -35,7 +49,11 @@ const SettingsScreen = () => {
 
       <ScrollView>
         {settingsOptions.map((option) => (
-          <TouchableOpacity key={option.id} style={styles.optionItem}>
+          <TouchableOpacity 
+            key={option.id} 
+            style={styles.optionItem}
+            onPress={() => handleOptionPress(option.id)}
+          >
             <Icon name={option.icon} size={24} color="#333" />
             <Text style={styles.optionText}>{option.title}</Text>
             <Icon name="chevron-right" size={24} color="#666" />

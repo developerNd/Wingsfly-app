@@ -19,6 +19,8 @@ import ShortScreen from '../screens/ShortScreen';
 import GoalAnalysisScreen from '../screens/GoalAnalysisScreen';
 import TeamManagementScreen from '../screens/TeamManagementScreen';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
+import AppLockScreen from '../screens/AppLockScreen';
+import PermissionsScreen from '../screens/PermissionsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -75,6 +77,8 @@ const AppNavigator = () => {
         />
         <Stack.Screen name="TeamManagement" component={TeamManagementScreen} />
         <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
+        <Stack.Screen name="AppLock" component={AppLockScreen} />
+        <Stack.Screen name="Permissions" component={PermissionsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

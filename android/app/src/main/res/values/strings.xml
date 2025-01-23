@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Wingsfly</string>
+    <string name="accessibility_service_description">Required for app lock functionality</string>
 </resources>
