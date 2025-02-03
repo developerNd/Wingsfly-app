@@ -31,7 +31,8 @@ const BottomTabNavigator = () => {
             backgroundColor: '#FFFFFF',
             borderRadius: 15,
             height: 60,
-            ...styles.shadow
+            ...styles.shadow,
+            zIndex: 1,
           },
           tabBarItemStyle: {
             padding: 5,

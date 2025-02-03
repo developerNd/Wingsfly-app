@@ -26,6 +26,8 @@ import { routineService, type Routine } from '../services/routineService';
 import { goalService } from '../services/goalService';
 import { Task } from '../types/task';
 import { SubGoal } from '../data/goalsData';
+import { categories } from '../data/categories';
+import { handleApiError, showErrorAlert } from '../utils/errorHandling';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
@@ -55,7 +57,9 @@ const HomeScreen = () => {
       setRoutines(data);
     } catch (error) {
       console.error('Error loading routines:', error);
-      setError('Failed to load routines. Please try again.');
+      const errorMessage = handleApiError(error, 'Failed to load routines');
+      setError(errorMessage);
+      showErrorAlert(error, 'Load Error', 'Failed to load routines', loadRoutines);
     } finally {
       setLoading(false);
     }
@@ -67,6 +71,7 @@ const HomeScreen = () => {
       setGoals(data);
     } catch (error) {
       console.error('Error loading goals:', error);
+      showErrorAlert(error, 'Load Error', 'Failed to load goals', loadGoals);
     }
   };
 
@@ -133,6 +138,12 @@ const HomeScreen = () => {
       setTodaysTasks(endSubGoals);
     } catch (error) {
       console.error('Error loading today\'s tasks:', error);
+      showErrorAlert(
+        error, 
+        'Load Error',
+        'Failed to load today\'s tasks',
+        loadTodaysTasks
+      );
     }
   };
 
@@ -165,10 +176,10 @@ const HomeScreen = () => {
       });
       console.log('Created goal:', createdGoal);
       setShowAddModal(false);
-      loadGoals(); // Refresh the goals list
+      loadGoals();
     } catch (error) {
       console.error('Error adding goal:', error);
-      setError('Failed to add goal. Please try again.');
+      showErrorAlert(error, 'Add Goal Error', 'Failed to add goal');
     } finally {
       setLoading(false);
     }
@@ -531,6 +542,7 @@ const HomeScreen = () => {
           visible={showAddModal}
           onClose={() => setShowAddModal(false)}
           onSave={handleAddTemporaryGoal}
+          categories={categories}
           loading={loading}
         />
       </ScrollView>

@@ -11,6 +11,13 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.ACTION_MANAGE_OVERLAY_PERMISSION" />
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
       android:name=".MainApplication"
@@ -36,9 +43,19 @@
        <activity
             android:name=".LockScreenActivity"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
             android:screenOrientation="portrait"
-            android:windowSoftInputMode="stateVisible"/>
+            android:showOnLockScreen="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:showWhenLocked="true"
+            android:turnScreenOn="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
        <service
             android:name=".AppMonitorService"
@@ -56,6 +73,11 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".TimerService"
+            android:enabled="true"
+            android:exported="false" />
 
     </application>
 </manifest>

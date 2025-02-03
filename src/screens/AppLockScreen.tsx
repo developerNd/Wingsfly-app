@@ -16,15 +16,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getInstalledApps } from '../utils/AppLockModule';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 
 const { AppLockModule } = NativeModules;
 
 interface AppInfo {
+  id: string;
   appName: string;
   packageName: string;
   isLocked: boolean;
   isSystemApp: boolean;
   isDistracting: boolean;
+  lockType: 'always' | 'scheduled_lock' | 'scheduled_unlock';
 }
 
 // Keywords that indicate potentially distracting apps
@@ -77,7 +80,12 @@ const AppLockScreen = () => {
   const [showOnlyDistracting, setShowOnlyDistracting] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const isDistracting = (packageName: string, appName: string): boolean => {
+  const isDistracting = (packageName: string | undefined, appName: string | undefined): boolean => {
+    // Return false if either packageName or appName is undefined
+    if (!packageName || !appName) {
+      return false;
+    }
+
     const lowerPackage = packageName.toLowerCase();
     const lowerName = appName.toLowerCase();
 
@@ -112,47 +120,88 @@ const AppLockScreen = () => {
   };
 
   const shouldShowApp = (packageName: string): boolean => {
-    // Always show specifically relevant apps
+    if (!packageName) return false;
+    
+    // Include specifically relevant system apps
     if (RELEVANT_APPS.includes(packageName)) {
       return true;
     }
 
-    // Show if it's not a system app and not our own app
-    return !isSystemApp(packageName) && packageName !== 'com.wingsfly';
+    // Exclude system apps and our own app
+    if (packageName.startsWith('com.android.') || 
+        packageName.startsWith('com.google.android.') ||
+        packageName === 'com.wingsfly') {
+      return false;
+    }
+
+    // Exclude common system-related packages
+    const excludePatterns = [
+      'systemui',
+      'provider',
+      'bluetooth',
+      'telephony',
+      'settings',
+      'keyboard',
+      'launcher',
+      'overlay',
+      'service',
+      'permission',
+      'package',
+      'printer',
+      'security',
+      'emulation',
+      'theme',
+      'config',
+      'backup',
+      'carrier',
+      'network',
+      'wifi',
+      'media.module',
+    ];
+
+    return !excludePatterns.some(pattern => packageName.toLowerCase().includes(pattern));
   };
+
+  useEffect(() => {
+    loadApps();
+  }, []);
+
+  // Add focus listener to reload apps when returning to screen
+  useFocusEffect(
+    React.useCallback(() => {
+      loadApps();
+    }, [])
+  );
 
   const loadApps = async () => {
     try {
-      const lockedApps = await AsyncStorage.getItem('lockedApps');
-      const lockedAppsSet = new Set(lockedApps ? JSON.parse(lockedApps) : []);
+      setLoading(true);
+      const installedPackages = await getInstalledApps();
+      console.log('Installed apps:', installedPackages);
 
-      const allApps = await getInstalledApps();
-      
-      // Format all apps data
-      const formattedApps = allApps
-        .filter(shouldShowApp)
-        .map((packageName: string) => {
-          const appName = packageName.split('.').pop() || packageName;
-          const isDistractingApp = isDistracting(packageName, appName);
-          
-          return {
-            appName: appName
-              .replace(/([A-Z])/g, ' $1')
-              .replace(/^./, str => str.toUpperCase())
-              .trim(),
-            packageName,
-            isLocked: lockedAppsSet.has(packageName),
-            isSystemApp: isSystemApp(packageName),
-            isDistracting: isDistractingApp
-          };
+      const savedLockStates = await AsyncStorage.getItem('appLockStates');
+      const lockStates = savedLockStates ? JSON.parse(savedLockStates) : {};
+
+      // Convert package names to AppInfo objects
+      const appsWithLockState = installedPackages
+        .filter((packageName: string) => packageName && shouldShowApp(packageName))
+        .map((packageName: string) => ({
+          id: packageName,
+          packageName,
+          appName: packageName.split('.').pop() || packageName, // Simple name from package
+          isLocked: lockStates[packageName]?.isLocked || false,
+          lockType: lockStates[packageName]?.lockType || 'always',
+          isSystemApp: packageName.startsWith('com.android.') || packageName.startsWith('com.google.android.'),
+          isDistracting: isDistracting(packageName, packageName.split('.').pop() || packageName),
+        }))
+        .sort((a: AppInfo, b: AppInfo) => {
+          if (a.isDistracting && !b.isDistracting) return -1;
+          if (!a.isDistracting && b.isDistracting) return 1;
+          return a.appName.localeCompare(b.appName);
         });
 
-      setApps(formattedApps.sort((a: AppInfo, b: AppInfo ) => {
-        // Sort distracting apps first, then by name
-        if (a.isDistracting && !b.isDistracting) return -1;
-        if (!a.isDistracting && b.isDistracting) return 1;
-        return a.appName.localeCompare(b.appName);
-      }));
+      console.log('Final processed apps:', appsWithLockState);
+      setApps(appsWithLockState);
     } catch (error) {
       console.error('Error loading apps:', error);
     } finally {
@@ -160,42 +209,76 @@ const AppLockScreen = () => {
     }
   };
 
-  useEffect(() => {
-    loadApps();
-  }, []);
+  const saveAppLockStates = async (updatedApps: AppInfo[]) => {
+    try {
+      const lockStates = updatedApps.reduce((acc, app) => ({
+        ...acc,
+        [app.packageName]: {
+          isLocked: app.isLocked,
+          lockType: app.lockType,
+        },
+      }), {});
+
+      await AsyncStorage.setItem('appLockStates', JSON.stringify(lockStates));
+    } catch (error) {
+      console.error('Error saving app lock states:', error);
+    }
+  };
 
   const toggleAppLock = async (packageName: string) => {
-    try {
-      const lockedApps = await AsyncStorage.getItem('lockedApps');
-      const lockedAppsSet = new Set(lockedApps ? JSON.parse(lockedApps) : []);
-      
-      if (lockedAppsSet.has(packageName)) {
-        lockedAppsSet.delete(packageName);
-        console.log(`Unlocked app: ${packageName}`);
-      } else {
-        lockedAppsSet.add(packageName);
-        console.log(`Locked app: ${packageName}`);
+    const updatedApps = apps.map(app => {
+      if (app.packageName === packageName) {
+        return {
+          ...app,
+          isLocked: !app.isLocked,
+          lockType: !app.isLocked ? 'always' : app.lockType, // Keep existing lock type if unlocking
+        };
       }
-      
-      const lockedAppsArray = [...lockedAppsSet];
-      
-      // Save to both AsyncStorage and SharedPreferences
-      await Promise.all([
-        AsyncStorage.setItem('lockedApps', JSON.stringify(lockedAppsArray)),
-        AppLockModule.updateLockedApps(lockedAppsArray)
-      ]);
-      
-      console.log('Current locked apps:', lockedAppsArray);
-      
-      setApps(prevApps => 
-        prevApps.map(app => 
-          app.packageName === packageName 
-            ? { ...app, isLocked: !app.isLocked }
-            : app
-        )
-      );
+      return app;
+    });
+
+    setApps(updatedApps);
+    await saveAppLockStates(updatedApps);
+
+    // Update native module
+    try {
+      const app = updatedApps.find(a => a.packageName === packageName);
+      if (app) {
+        await AppLockModule.updateAppLockTypes(packageName, app.isLocked ? app.lockType : 'none');
+      }
     } catch (error) {
-      console.error('Error toggling app lock:', error);
+      console.error('Error updating native lock state:', error);
+    }
+  };
+
+  const updateLockType = async (packageName: string, lockType: 'always' | 'scheduled_lock' | 'scheduled_unlock') => {
+    const updatedApps = apps.map(app => {
+      if (app.packageName === packageName) {
+        return {
+          ...app,
+          lockType,
+        };
+      }
+      return app;
+    });
+
+    setApps(updatedApps);
+    await saveAppLockStates(updatedApps);
+
+    try {
+      await AppLockModule.updateAppLockTypes(packageName, lockType);
+    } catch (error) {
+      console.error('Error updating lock type:', error);
+    }
+  };
+
+  // Add this function to handle schedule updates
+  const handleScheduleUpdate = async (packageName: string, lockType: string) => {
+    try {
+      // Just update the lock type
+      await updateLockType(packageName, 'scheduled_lock' as 'always' | 'scheduled_lock' | 'scheduled_unlock');
+    } catch (error) {
+      console.error('Error updating app lock schedule:', error);
     }
   };
 
@@ -209,6 +292,7 @@ const AppLockScreen = () => {
           <Icon name="arrow-back" size={24} color="#333333" />
         </TouchableOpacity>
         <Text style={styles.title}>App Lock</Text>
+        <View style={{ width: 40 }} />
       </View>
       <View style={styles.filterContainer}>
         <Text style={styles.filterText}>Show only distracting apps</Text>
@@ -224,50 +308,92 @@ const AppLockScreen = () => {
   );
 
   const renderItem = ({ item }: { item: AppInfo }) => (
-    <TouchableOpacity
-      style={[
-        styles.appItem,
-        item.isDistracting && styles.distractingApp
-      ]}
+    <TouchableOpacity 
+      style={[styles.appItem, item.isDistracting && styles.distractingApp]}
       onPress={() => toggleAppLock(item.packageName)}
-      activeOpacity={0.7}
     >
-      <View style={styles.appIconContainer}>
-        <Icon 
-          name={item.isDistracting ? "warning" : "android"} 
-          size={32} 
-          color={item.isDistracting ? "#FF9800" : "#4CAF50"} 
-        />
-      </View>
-      <View style={styles.appInfo}>
-        <Text style={styles.appName} numberOfLines={1}>
-          {item.appName}
-        </Text>
-        <Text style={styles.packageName} numberOfLines={1}>
-          {item.packageName}
-        </Text>
-        {item.isDistracting && (
-          <View style={styles.distractingLabelContainer}>
-            <Icon name="error-outline" size={12} color="#FF9800" />
-            <Text style={styles.distractingLabel}>Distracting App</Text>
+      <View style={styles.appHeader}>
+        <View style={styles.appIconContainer}>
+          <Icon name="android" size={24} color="#666666" />
+        </View>
+        <View style={styles.appInfo}>
+          <View style={styles.appTitleContainer}>
+            <Text style={styles.appName}>{item.appName}</Text>
+            <Text style={styles.packageName}>{item.packageName}</Text>
+            {item.isDistracting && (
+              <View style={styles.distractingLabelContainer}>
+                <Icon name="warning" size={12} color="#FF9800" />
+                <Text style={styles.distractingLabel}>Potentially Distracting</Text>
+              </View>
+            )}
           </View>
-        )}
+          <Switch
+            value={item.isLocked}
+            onValueChange={() => toggleAppLock(item.packageName)}
+            trackColor={{ false: '#E0E0E0', true: '#81D4FA' }}
+            thumbColor={item.isLocked ? '#2196F3' : '#FFFFFF'}
+          />
+        </View>
       </View>
-      <View style={styles.switchContainer}>
-        <Switch
-          value={item.isLocked}
-          onValueChange={() => toggleAppLock(item.packageName)}
-          trackColor={{ false: '#E0E0E0', true: '#81D4FA' }}
-          thumbColor={item.isLocked ? '#2196F3' : '#FFFFFF'}
-          ios_backgroundColor="#E0E0E0"
-        />
-        <Text style={[
-          styles.lockStatus,
-          { color: item.isLocked ? '#2196F3' : '#666666' }
-        ]}>
-          {item.isLocked ? 'Locked' : 'Unlocked'}
-        </Text>
-      </View>
+
+      {item.isLocked && (
+        <View style={styles.lockOptionsContainer}>
+          <Text style={styles.lockOptionsLabel}>Lock Mode:</Text>
+          <View style={styles.lockTypeSelector}>
+            <TouchableOpacity
+              style={[
+                styles.lockTypeButton,
+                item.lockType === 'always' && styles.activeLockType
+              ]}
+              onPress={() => updateLockType(item.packageName, 'always')}
+            >
+              <Icon 
+                name="lock" 
+                size={16} 
+                color={item.lockType === 'always' ? '#FFFFFF' : '#666666'} 
+              />
+              <Text style={[
+                styles.lockTypeText,
+                item.lockType === 'always' && styles.activeLockTypeText
+              ]}>Always</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.lockTypeButton,
+                item.lockType === 'scheduled_lock' && styles.activeLockType
+              ]}
+              onPress={() => handleScheduleUpdate(item.packageName, 'scheduled_lock')}
+            >
+              <Icon 
+                name="schedule" 
+                size={16} 
+                color={item.lockType === 'scheduled_lock' ? '#FFFFFF' : '#666666'} 
+              />
+              <Text style={[
+                styles.lockTypeText,
+                item.lockType === 'scheduled_lock' && styles.activeLockTypeText
+              ]}>Lock Schedule</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.lockTypeButton,
+                item.lockType === 'scheduled_unlock' && styles.activeLockType
+              ]}
+              onPress={() => updateLockType(item.packageName, 'scheduled_unlock')}
+            >
+              <Icon 
+                name="lock-open" 
+                size={16} 
+                color={item.lockType === 'scheduled_unlock' ? '#FFFFFF' : '#666666'} 
+              />
+              <Text style={[
+                styles.lockTypeText,
+                item.lockType === 'scheduled_unlock' && styles.activeLockTypeText
+              ]}>Unlock Schedule</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </TouchableOpacity>
   );
 
@@ -287,7 +413,7 @@ const AppLockScreen = () => {
           <FlatList
             data={showOnlyDistracting ? apps.filter(app => app.isDistracting) : apps}
             renderItem={renderItem}
-            keyExtractor={item => item.packageName}
+            keyExtractor={(item) => item.packageName}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
@@ -316,6 +442,7 @@ const styles = StyleSheet.create({
   headerTop: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
   },
   backButton: {
@@ -347,23 +474,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   appItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
+    padding: 16,
     marginBottom: 8,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
+    width: '100%',
+  },
+  appHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
   appIconContainer: {
     width: 48,
@@ -375,6 +495,10 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   appInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  appTitleContainer: {
     flex: 1,
     marginRight: 12,
   },
@@ -402,13 +526,43 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     fontWeight: '500',
   },
-  switchContainer: {
-    alignItems: 'center',
+  lockOptionsContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
   },
-  lockStatus: {
-    fontSize: 10,
-    marginTop: 4,
+  lockOptionsLabel: {
+    fontSize: 13,
+    color: '#666666',
+    marginBottom: 8,
     fontWeight: '500',
+  },
+  lockTypeSelector: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  lockTypeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#F5F5F5',
+    gap: 4,
+  },
+  activeLockType: {
+    backgroundColor: '#2196F3',
+  },
+  lockTypeText: {
+    fontSize: 12,
+    color: '#666666',
+    fontWeight: '500',
+  },
+  activeLockTypeText: {
+    color: '#FFFFFF',
   },
   separator: {
     height: 8,
@@ -417,6 +571,7 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     paddingBottom: 24,
+    flexGrow: 1,
   },
 });
 

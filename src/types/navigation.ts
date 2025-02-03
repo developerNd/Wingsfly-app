@@ -79,6 +79,7 @@ export type RootStackParamList = {
   };
   WorkTracking: {
     task: Task;
+    initialTimeElapsed?: number;
   };
   QuotesScreen: undefined;
   ShortScreen: {
@@ -89,7 +90,14 @@ export type RootStackParamList = {
   Leaderboard: undefined;
   Routines: undefined;
   AppLock: undefined;
+  ScheduleSettings: undefined;
   Permissions: undefined;
+  ScheduleLock: undefined;
+  ScheduleUnlock: undefined;
+  AppUnlockSchedule: {
+    packageName: string;
+    appName: string;
+  };
 };
 
 declare global {

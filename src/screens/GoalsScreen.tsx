@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, Alert } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import LinearGradient from 'react-native-linear-gradient';
@@ -11,6 +11,10 @@ import { goalService } from '../services/goalService';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorMessage from '../components/ErrorMessage';
 import { LifeGoal } from '../types/goals';
+import { categories } from '../data/categories';
+import { handleApiError, showErrorAlert } from '../utils/errorHandling';
+import NetworkErrorBoundary from '../components/NetworkErrorBoundary';
+import { TASK_PRIORITY } from '../data/tasksData';
 
 const GoalsScreen = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -18,6 +22,7 @@ const GoalsScreen = () => {
   const [goals, setGoals] = useState<LifeGoal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
   useEffect(() => {
     loadGoals();
@@ -40,10 +45,10 @@ const GoalsScreen = () => {
               setLoading(true);
               setError(null);
               await goalService.deleteGoal(goalId);
-              await loadGoals(); // Refresh the goals list
-            } catch (error) {
-              console.error('Error deleting goal:', error);
-              setError('Failed to delete goal. Please try again.');
+              setGoals(prevGoals => prevGoals.filter(goal => goal.id !== goalId));
+            } catch (err) {
+              console.error('Error deleting goal:', err);
+              showErrorAlert(err, 'Delete Error', 'Failed to delete goal');
             } finally {
               setLoading(false);
             }
@@ -89,7 +94,6 @@ const GoalsScreen = () => {
       setError(null);
       const fetchedGoals = await goalService.getAllGoals();
       
-      // Transform goals to include total subgoal count and calculated progress
       const transformedGoals = fetchedGoals.map(goal => {
         const { totalCount, progress } = calculateGoalProgress(goal);
         return {
@@ -101,8 +105,10 @@ const GoalsScreen = () => {
 
       setGoals(transformedGoals);
     } catch (err) {
-      setError('Failed to load goals. Please try again.');
       console.error('Error loading goals:', err);
+      const errorMessage = handleApiError(err, 'Failed to load goals');
+      setError(errorMessage);
+      showErrorAlert(err, 'Load Error', 'Failed to load goals', loadGoals);
     } finally {
       setLoading(false);
     }
@@ -110,11 +116,68 @@ const GoalsScreen = () => {
 
   const handleAddGoal = async (newGoal: Partial<LifeGoal>) => {
     try {
+      // Convert time format from "7:13:29 PM" to "19:13"
+      const convertTime = (timeStr: string | null | undefined) => {
+        if (!timeStr) return null;
+        try {
+          const [time, period] = timeStr.split(' ');
+          const [hours, minutes] = time.split(':');
+          let hour = parseInt(hours);
+          
+          if (period === 'PM' && hour !== 12) hour += 12;
+          if (period === 'AM' && hour === 12) hour = 0;
+          
+          return `${hour.toString().padStart(2, '0')}:${minutes}`;
+        } catch (error) {
+          console.error('Time conversion error:', error);
+          return timeStr;
+        }
+      };
+
+      // Calculate duration
+      const calculateDuration = () => {
+        if (!newGoal.startDate || !newGoal.endDate || !newGoal.start_time || !newGoal.end_time) {
+          return 0;
+        }
+        const startDateTime = new Date(`${newGoal.startDate}T${convertTime(newGoal.start_time)}`);
+        const endDateTime = new Date(`${newGoal.endDate}T${convertTime(newGoal.end_time)}`);
+        return Math.floor((endDateTime.getTime() - startDateTime.getTime()) / 60000);
+      };
+
+      // Validate time if provided
+      if (newGoal.startTime && newGoal.endTime) {
+        const startTime = new Date(`1970-01-01T${convertTime(newGoal.startTime)}`);
+        const endTime = new Date(`1970-01-01T${convertTime(newGoal.endTime)}`);
+        
+        if (endTime <= startTime) {
+          Alert.alert('Invalid Time', 'End time must be after start time');
+          return;
+        }
+      }
+
+      // Rest of validation...
+      if (!newGoal.title || !newGoal.category || !newGoal.priority) {
+        Alert.alert('Missing Fields', 'Please fill in all required fields');
+        return;
+      }
+
       setLoading(true);
       setError(null);
-      const createdGoal = await goalService.createGoal(newGoal);
+
+      const goalData = {
+        ...newGoal,
+        priority: newGoal.priority || TASK_PRIORITY.MEDIUM,
+        category: newGoal.category,
+        start_time: convertTime(newGoal.start_time || newGoal.startTime),
+        end_time: convertTime(newGoal.end_time || newGoal.endTime),
+        start_date: newGoal.startDate,
+        end_date: newGoal.endDate,
+        duration: calculateDuration(),
+        is_temporary: newGoal.is_temporary || false
+      };
+
+      const createdGoal = await goalService.createGoal(goalData);
       
-      // Calculate initial progress and subgoal count for the new goal
       const { totalCount, progress } = calculateGoalProgress(createdGoal);
       const transformedGoal = {
         ...createdGoal,
@@ -125,8 +188,8 @@ const GoalsScreen = () => {
       setGoals(prevGoals => [...prevGoals, transformedGoal]);
       setShowAddModal(false);
     } catch (err) {
-      setError('Failed to create goal. Please try again.');
       console.error('Error creating goal:', err);
+      showErrorAlert(err, 'Add Goal Error', 'Failed to create goal');
     } finally {
       setLoading(false);
     }
@@ -169,6 +232,48 @@ const GoalsScreen = () => {
     }
   };
 
+  const filteredGoals = useMemo(() => {
+    if (selectedCategory === 'all') return goals;
+    return goals.filter(goal => goal.category === selectedCategory);
+  }, [goals, selectedCategory]);
+
+  const CategorySelector = () => (
+    <ScrollView 
+      horizontal 
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.categoryContainer}
+    >
+      <TouchableOpacity
+        style={[
+          styles.categoryChip,
+          selectedCategory === 'all' && styles.selectedCategoryChip
+        ]}
+        onPress={() => setSelectedCategory('all')}
+      >
+        <Text style={[
+          styles.categoryText,
+          selectedCategory === 'all' && styles.selectedCategoryText
+        ]}>All</Text>
+      </TouchableOpacity>
+      {categories.map(category => (
+        <TouchableOpacity
+          key={category.id}
+          style={[
+            styles.categoryChip,
+            selectedCategory === category.id && styles.selectedCategoryChip
+          ]}
+          onPress={() => setSelectedCategory(category.id)}
+        >
+          <Icon name={category.icon} size={16} color={selectedCategory === category.id ? '#FFF' : '#1A2980'} />
+          <Text style={[
+            styles.categoryText,
+            selectedCategory === category.id && styles.selectedCategoryText
+          ]}>{category.name}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+
   if (loading) {
     return <LoadingSpinner />;
   }
@@ -187,74 +292,86 @@ const GoalsScreen = () => {
           </TouchableOpacity>
         </LinearGradient>
 
-        {error && <ErrorMessage message={error} onRetry={loadGoals} />}
+        {/* <CategorySelector /> */}
 
-        <ScrollView 
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {goals.map((goal) => (
-            <TouchableOpacity 
-              key={goal.id} 
-              style={styles.goalCard}
-              onPress={() => handleGoalPress(goal)}
-            >
-              <LinearGradient 
-                colors={getBackgroundColors(goal.color)}
-                style={styles.goalGradient}
+        {error ? (
+          <NetworkErrorBoundary 
+            error={error} 
+            onRetry={loadGoals}
+          />
+        ) : (
+          <ScrollView 
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {filteredGoals.map((goal) => (
+              <TouchableOpacity 
+                key={goal.id} 
+                style={styles.goalCard}
+                onPress={() => handleGoalPress(goal)}
               >
-                <View style={styles.goalHeader}>
-                  <View style={[styles.iconContainer, { 
-                    backgroundColor: goal.color + '15',
-                    borderColor: goal.color + '30'
-                  }]}>
-                    <Icon name={goal.icon} size={24} color={goal.color} />
+                <LinearGradient 
+                  colors={getBackgroundColors(goal.color)}
+                  style={styles.goalGradient}
+                >
+                  <View style={styles.goalHeader}>
+                    <View style={[styles.iconContainer, { 
+                      backgroundColor: goal.color + '15',
+                      borderColor: goal.color + '30'
+                    }]}>
+                      <Icon name={goal.icon} size={24} color={goal.color} />
+                    </View>
+                    <View style={styles.goalInfo}>
+                      <Text style={[styles.goalTitle, { color: '#1A2980' }]}>{goal.title}</Text>
+                      <Text style={[styles.goalDescription, { 
+                        color: 'rgba(26, 41, 128, 0.7)'
+                      }]}>{goal.description}</Text>
+                    </View>
                   </View>
-                  <View style={styles.goalInfo}>
-                    <Text style={[styles.goalTitle, { color: '#1A2980' }]}>{goal.title}</Text>
-                    <Text style={[styles.goalDescription, { 
-                      color: 'rgba(26, 41, 128, 0.7)'
-                    }]}>{goal.description}</Text>
-                  </View>
-                </View>
 
-                <View style={styles.goalFooter}>
-                  <View style={styles.progressContainer}>
-                    <View style={[styles.progressBar, { width: `${goal.progress}%`, backgroundColor: goal.color }]} />
-                  </View>
-                  <View style={styles.statsContainer}>
-                    <View style={[styles.statBadge, { backgroundColor: 'rgba(0, 0, 0, 0.05)' }]}>
-                      <Icon name="trending-up" size={14} color={goal.color} />
-                      <Text style={[styles.progressText, { color: goal.color }]}>
-                        {goal.progress}% Complete
-                      </Text>
+                  <View style={styles.goalFooter}>
+                    <View style={styles.progressContainer}>
+                      <View style={[styles.progressBar, { width: `${goal.progress}%`, backgroundColor: goal.color }]} />
                     </View>
-                    <View style={[styles.statBadge, { backgroundColor: 'rgba(0, 0, 0, 0.05)' }]}>
-                      <Icon name="format-list-bulleted" size={14} color={goal.color} />
-                      <Text style={[styles.subGoalsText, { color: goal.color }]}>
-                        {goal.subGoalsCount} Sub Goals
-                      </Text>
+                    <View style={styles.statsContainer}>
+                      <View style={[styles.statBadge, { backgroundColor: 'rgba(0, 0, 0, 0.05)' }]}>
+                        <Icon name="trending-up" size={14} color={goal.color} />
+                        <Text style={[styles.progressText, { color: goal.color }]}>
+                          {goal.progress}% Complete
+                        </Text>
+                      </View>
+                      <View style={[styles.statBadge, { backgroundColor: 'rgba(0, 0, 0, 0.05)' }]}>
+                        <Icon name="format-list-bulleted" size={14} color={goal.color} />
+                        <Text style={[styles.subGoalsText, { color: goal.color }]}>
+                          {goal.subGoalsCount} Sub Goals
+                        </Text>
+                      </View>
                     </View>
+                    <TouchableOpacity
+                      style={[styles.deleteButton, { backgroundColor: 'rgba(255, 68, 68, 0.1)' }]}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleDeleteGoal(goal.id);
+                      }}
+                    >
+                      <Icon name="delete" size={20} color="#FF4444" />
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.deleteButton, { backgroundColor: 'rgba(255, 68, 68, 0.1)' }]}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      handleDeleteGoal(goal.id);
-                    }}
-                  >
-                    <Icon name="delete" size={20} color="#FF4444" />
-                  </TouchableOpacity>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+                </LinearGradient>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
 
         <AddTemporaryGoalModal
           visible={showAddModal}
           onClose={() => setShowAddModal(false)}
           onSave={handleAddGoal}
+          categories={categories}
+          loading={loading}
+          requireCategory={true}
+          requirePriority={true}
+          validateTime={true}
         />
       </View>
     </SafeAreaView>
@@ -395,6 +512,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginLeft: 'auto',
     marginTop: 12,
+  },
+  categoryContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(26, 41, 128, 0.1)',
+    marginRight: 8,
+    gap: 6,
+  },
+  selectedCategoryChip: {
+    backgroundColor: '#1A2980',
+  },
+  categoryText: {
+    fontSize: 14,
+    color: '#1A2980',
+    fontFamily: 'Poppins-Medium',
+  },
+  selectedCategoryText: {
+    color: '#FFF',
   },
 });
 

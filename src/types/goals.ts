@@ -1,21 +1,25 @@
 import { TaskPriority } from './task';
 
-export type SubGoal = {
+export interface SubGoal {
   id: number;
   title: string;
+  description: string;
   completed: boolean;
-  dueDate?: string;
-  startTime?: string;
-  endTime?: string;
-  duration?: number;
-  description?: string;
-  subGoals?: SubGoal[];
   progress: number;
-  isTemporary?: boolean;
-  priority?: TaskPriority;
-  parent_id?: number | null;
-  parent_type?: string | null;
-};
+  dueDate: string | undefined;
+  startDate: string | undefined;
+  endDate: string | undefined;
+  startTime: string | undefined;
+  start_time: string | undefined;
+  endTime: string | undefined;
+  end_time: string | undefined;
+  duration: number;
+  isTemporary: boolean;
+  subGoals?: SubGoal[];
+  priority: string;
+  color?: string;
+  icon?: string;
+}
 
 export interface LifeGoal {
   id: number;
@@ -26,11 +30,15 @@ export interface LifeGoal {
   icon: string;
   subGoals: SubGoal[];
   isTemporary?: boolean;
+  is_temporary?: boolean;
   startDate?: string;
   endDate?: string;
   startTime?: string;
   endTime?: string;
+  start_time?: string;
+  end_time?: string;
   duration?: number;
   subGoalsCount?: number;
   priority?: TaskPriority;
+  category: string;
 } 

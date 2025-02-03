@@ -21,7 +21,7 @@ import { Task } from '../types/task';
 import { TASK_PRIORITY } from '../data/tasksData';
 import { getTodaysTasks } from '../data/tasksData';
 import AddTemporaryGoalModal from '../components/AddTemporaryGoalModal';
-import { goalService } from '../services/goalService';
+import { goalService, SubGoalRequestData } from '../services/goalService';
 import axios from 'axios';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -126,9 +126,13 @@ const DetailedGoalScreen = ({ route, navigation }: Props) => {
     description: subGoal.description,
     completed: subGoal.completed,
     progress: subGoal.progress,
+    startDate: subGoal.start_date, 
+    endDate: subGoal.end_date,   
     dueDate: subGoal.due_date,
     startTime: subGoal.start_time,
     endTime: subGoal.end_time,
+    start_time: subGoal.start_time,
+    end_time: subGoal.end_time,
     duration: subGoal.duration,
     isTemporary: subGoal.is_temporary,
     priority: subGoal.priority || TASK_PRIORITY.MEDIUM,
@@ -240,89 +244,95 @@ const DetailedGoalScreen = ({ route, navigation }: Props) => {
     }
   };
 
+  const updateNestedSubGoals = (subGoals: SubGoal[], parentId: number, transformedSubGoal: SubGoal): SubGoal[] => {
+    return subGoals.map(sg => {
+      if (sg.id === parentId) {
+        return {
+          ...sg,
+          subGoals: [...(sg.subGoals || []), transformedSubGoal],
+        };
+      }
+      if (sg.subGoals && sg.subGoals.length > 0) {
+        return {
+          ...sg,
+          subGoals: updateNestedSubGoals(sg.subGoals, parentId, transformedSubGoal),
+        };
+      }
+      return sg;
+    });
+  };
+
   const handleAddSubGoal = async (newGoal: Partial<SubGoal>, parentId: number) => {
     try {
       setLoading(true);
       setError(null);
 
-      console.log('=== Debug Info ===');
-      console.log('parentId received:', parentId);
-      console.log('current goalId:', goalId);
-      console.log('original goalId:', originalGoalId);
-      console.log('newGoal:', newGoal);
-
-      // Check if this is a top-level add (from the main "Add Sub Goal" button)
       const isTopLevel = parentId === originalGoalId;
 
-      const subGoalData = {
+      // Convert time format from "6:53:07 PM" to "18:53"
+      const convertTime = (timeStr: string | null | undefined) => {
+        if (!timeStr) return null;
+        try {
+          const [time, period] = timeStr.split(' ');
+          const [hours, minutes] = time.split(':');
+          let hour = parseInt(hours);
+          
+          if (period === 'PM' && hour !== 12) hour += 12;
+          if (period === 'AM' && hour === 12) hour = 0;
+          
+          return `${hour.toString().padStart(2, '0')}:${minutes}`;
+        } catch (error) {
+          console.error('Time conversion error:', error);
+          return timeStr; // Return original string if conversion fails
+        }
+      };
+
+      // Calculate duration in minutes based on start and end date/time
+      const calculateDuration = () => {
+        if (!newGoal.startDate || !newGoal.endDate || !newGoal.start_time || !newGoal.end_time) {
+          return 0;
+        }
+
+        const startDateTime = new Date(`${newGoal.startDate}T${convertTime(newGoal.start_time)}`);
+        const endDateTime = new Date(`${newGoal.endDate}T${convertTime(newGoal.end_time)}`);
+        
+        return Math.floor((endDateTime.getTime() - startDateTime.getTime()) / 60000);
+      };
+
+      const subGoalData: SubGoalRequestData = {
         title: newGoal.title || '',
         description: newGoal.description || '',
         completed: false,
         progress: 0,
+        start_date: newGoal.startDate || null,
+        end_date: newGoal.endDate || null,
         due_date: newGoal.dueDate || null,
-        start_time: formatTime(newGoal.startTime) || null,
-        end_time: formatTime(newGoal.endTime) || null,
-        duration: newGoal.duration || 0,
-        is_temporary: newGoal.isTemporary ?? false,
+        start_time: convertTime(newGoal.start_time || newGoal.startTime),
+        end_time: convertTime(newGoal.end_time || newGoal.endTime),
+        duration: calculateDuration(),
+        is_temporary: false,
         parent_id: isTopLevel ? null : parentId,
         parent_type: isTopLevel ? null : 'App\\Models\\SubGoal',
-        priority: newGoal.priority || TASK_PRIORITY.MEDIUM
+        priority: newGoal.priority || TASK_PRIORITY.MEDIUM,
+        color: newGoal.color || '#1A2980',
+        icon: newGoal.icon || 'star'
       };
 
-      console.log('Creating subgoal with data:', {
-        isTopLevel,
-        parentId,
-        subGoalData
-      });
-
-      // Always use regular endpoint for top-level subgoals
+      console.log('Submitting subgoal data:', subGoalData);
       const createdSubGoal = await goalService.createSubGoal(originalGoalId, subGoalData);
       const transformedSubGoal = transformSubGoal(createdSubGoal);
       
-      // Helper function to update nested subgoals
-      const updateNestedSubGoals = (subGoals: SubGoal[]): SubGoal[] => {
-        return subGoals.map(sg => {
-          if (sg.id === parentId) {
-            return {
-              ...sg,
-              subGoals: [...(sg.subGoals || []), transformedSubGoal],
-            };
-          }
-          if (sg.subGoals && sg.subGoals.length > 0) {
-            return {
-              ...sg,
-              subGoals: updateNestedSubGoals(sg.subGoals),
-            };
-          }
-          return sg;
-        });
-      };
-
-      // Update local state
+      // Update local state with proper nesting
       let updatedSubGoals: SubGoal[];
       if (isTopLevel) {
-        // Add to top level
         updatedSubGoals = [...subGoals, transformedSubGoal];
       } else {
-        // Add to nested subgoal
-        updatedSubGoals = updateNestedSubGoals(subGoals);
+        updatedSubGoals = updateNestedSubGoals(subGoals, parentId, transformedSubGoal);
       }
 
       setSubGoals(updatedSubGoals);
-
-      // Calculate and update the overall progress
-      const newProgress = calculateProgress(updatedSubGoals);
-      if (newProgress !== progress) {
-        // Update the progress in the parent goal/subgoal
-        if (route.params.isSubGoal) {
-          await goalService.updateSubGoal(goalId, { progress: newProgress });
-        } else {
-          await goalService.updateGoal(goalId, { progress: newProgress });
-        }
-        setProgress(newProgress);
-      }
-
       setShowAddModal(null);
+
     } catch (error) {
       console.error('Error creating subgoal:', error);
       if (axios.isAxiosError(error) && error.response) {
@@ -766,13 +776,13 @@ const DetailedGoalScreen = ({ route, navigation }: Props) => {
           onClose={() => setShowAddModal(null)}
           onSave={(newGoal) => {
             if (showAddModal) {
-              console.log('Modal saving with parentId:', showAddModal.parentId);
               handleAddSubGoal(newGoal, showAddModal.parentId);
             }
           }}
           isSubGoal
           parentColor={color}
           loading={loading}
+          categories={[]}
         />
       </View>
     </SafeAreaView>
@@ -1111,9 +1121,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Poppins-Medium',
   },
-  // subGoalContainer: {
-  //   marginHorizontal: 20,
-  // },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

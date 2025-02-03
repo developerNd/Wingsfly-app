@@ -21,6 +21,12 @@ import TeamManagementScreen from '../screens/TeamManagementScreen';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
 import AppLockScreen from '../screens/AppLockScreen';
 import PermissionsScreen from '../screens/PermissionsScreen';
+import ScheduleLockScreen from '../screens/ScheduleLockScreen';
+import ScheduleSettingsScreen from '../screens/ScheduleSettingsScreen';
+import AppUnlockScheduleScreen from '../screens/AppUnlockScheduleScreen';
+import ScheduleUnlockScreen from '../screens/ScheduleUnlockScreen';
+import { TouchableOpacity, Platform } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -55,8 +61,8 @@ const AppNavigator = () => {
           name="WorkTracking" 
           component={WorkTrackingScreen}
           options={{
-            headerShown: true,
-            title: 'Work Tracking'
+            headerShown: false,
+            gestureEnabled: false,
           }}
         />
         <Stack.Screen 
@@ -79,6 +85,53 @@ const AppNavigator = () => {
         <Stack.Screen name="Leaderboard" component={LeaderboardScreen} />
         <Stack.Screen name="AppLock" component={AppLockScreen} />
         <Stack.Screen name="Permissions" component={PermissionsScreen} />
+        <Stack.Screen 
+          name="ScheduleLock" 
+          component={ScheduleLockScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen 
+          name="ScheduleSettings" 
+          component={ScheduleSettingsScreen}
+          options={({ navigation }) => ({
+            headerShown: true,
+            title: 'Schedule Settings',
+            headerTitleStyle: {
+              fontSize: 20,
+              fontWeight: '600',
+              color: '#333',
+            },
+            headerStyle: {
+              backgroundColor: '#FFFFFF',
+              ...Platform.select({
+                android: { elevation: 0 },
+                ios: { shadowOpacity: 0 }
+              }),
+            },
+            headerLeft: () => (
+              <TouchableOpacity
+                style={{ marginLeft: 16 }}
+                onPress={() => navigation.goBack()}
+              >
+                <Icon name="arrow-back" size={24} color="#333" />
+              </TouchableOpacity>
+            ),
+          })}
+        />
+        <Stack.Screen 
+          name="AppUnlockSchedule" 
+          component={AppUnlockScheduleScreen}
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen 
+          name="ScheduleUnlock" 
+          component={ScheduleUnlockScreen}
+          options={{
+            headerShown: false,
+          }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

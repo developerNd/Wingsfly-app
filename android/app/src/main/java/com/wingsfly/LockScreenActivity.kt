@@ -8,6 +8,9 @@ import androidx.appcompat.app.AppCompatActivity
 import android.content.SharedPreferences
 import android.content.Intent
 import android.view.WindowManager
+import android.os.Build
+import android.view.WindowInsets
+import androidx.activity.OnBackPressedCallback
 
 class LockScreenActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
@@ -15,13 +18,48 @@ class LockScreenActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Set window flags
-        window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-                or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-                or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
-        
+
+        // Set window flags to show over lock screen and other apps
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+
+        // Add these flags for MIUI and other custom ROMs
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_LOCAL_FOCUS_MODE
+        )
+
+        // Set window type for overlay
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.attributes.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            window.attributes.type = WindowManager.LayoutParams.TYPE_SYSTEM_ERROR
+        }
+
+        // Fix the back press callback implementation
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Go to home screen instead of previous app
+                val homeIntent = Intent(Intent.ACTION_MAIN)
+                homeIntent.addCategory(Intent.CATEGORY_HOME)
+                homeIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                startActivity(homeIntent)
+            }
+        })
+
         setContentView(R.layout.activity_lock_screen)
         
         prefs = getSharedPreferences("AppLock", MODE_PRIVATE)
@@ -59,10 +97,19 @@ class LockScreenActivity : AppCompatActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        val homeIntent = Intent(Intent.ACTION_MAIN)
-        homeIntent.addCategory(Intent.CATEGORY_HOME)
-        homeIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        startActivity(homeIntent)
+    override fun onStart() {
+        super.onStart()
+        // Ensure activity shows on top
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Force activity to front on MIUI devices
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.show(WindowInsets.Type.statusBars())
+        }
     }
 }

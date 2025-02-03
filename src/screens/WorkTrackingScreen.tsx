@@ -9,6 +9,10 @@ import {
   TextInput,
   SafeAreaView,
   Dimensions,
+  AppState,
+  Platform,
+  NativeModules,
+  BackHandler,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { Task, WorkMode, PomodoroSettings } from '../types/task';
@@ -17,6 +21,8 @@ import { RootStackParamList } from '../types/navigation';
 import CircularTimer from '../components/CircularTimer';
 import { goalService } from '../services/goalService';
 import { routineService } from '../services/routineService';
+import Sound from 'react-native-sound';
+const { AppLockModule, TimerModule } = NativeModules;
 
 type Props = NativeStackScreenProps<RootStackParamList, 'WorkTracking'>;
 
@@ -29,8 +35,51 @@ const defaultPomodoroSettings: PomodoroSettings = {
 
 const { width } = Dimensions.get('window');
 
+const initializeSound = () => {
+  // Enable playback in silence mode
+  if (Platform.OS === 'android') {
+    Sound.setCategory('Playback', true); // true = mixWithOthers
+  }
+};
+
+const playSound = (type: 'start' | 'stop' | 'break' | 'work' | 'complete') => {
+  // Define sound files for different events
+  const soundMap = {
+    start: Platform.OS === 'android' ? 'start_work' : 'start_work.mp3',
+    stop: Platform.OS === 'android' ? 'start_work' : 'start_work.mp3',
+    break: Platform.OS === 'android' ? 'start_work' : 'start_work.mp3',
+    work: Platform.OS === 'android' ? 'start_work' : 'start_work.mp3',
+    complete: Platform.OS === 'android' ? 'start_work' : 'start_work.mp3'
+  };
+
+  const sound = new Sound(
+    soundMap[type], 
+    Platform.OS === 'android' ? Sound.MAIN_BUNDLE : Sound.MAIN_BUNDLE,
+    (error) => {
+      if (error) {
+        console.error('Failed to load sound', error);
+        return;
+      }
+      
+      try {
+        // Play the sound with custom volume
+        sound.setVolume(0.5);
+        sound.play((success) => {
+          if (!success) {
+            console.error('Sound playback failed');
+          }
+          sound.release();
+        });
+      } catch (e) {
+        console.error('Error playing sound:', e);
+        sound.release();
+      }
+    }
+  );
+};
+
 const WorkTrackingScreen = ({ route, navigation }: Props) => {
-  const { task: serializedTask } = route.params;
+  const { task: serializedTask, initialTimeElapsed = 0 } = route.params;
   
   // Deserialize the dates
   const task = {
@@ -43,16 +92,35 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
   const [showSettings, setShowSettings] = useState(false);
   const [pomodoroSettings, setPomodoroSettings] = useState<PomodoroSettings>(defaultPomodoroSettings);
   const [isRunning, setIsRunning] = useState(false);
-  const [timeElapsed, setTimeElapsed] = useState(0);
+  const [timeElapsed, setTimeElapsed] = useState(initialTimeElapsed);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [currentSession, setCurrentSession] = useState(1);
   const [isBreak, setIsBreak] = useState(false);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [backgroundTime, setBackgroundTime] = useState<Date | null>(null);
+  const [isTracking, setIsTracking] = useState(false);
+  const [totalRequiredSessions, setTotalRequiredSessions] = useState(1);
+
+  const checkTaskStatus = async () => {
+    try {
+      const taskInfo = await TimerModule.getRunningTaskInfo();
+      if (taskInfo) {
+        setIsRunning(true);
+        setTimeElapsed(taskInfo.timeElapsed || 0);
+      }
+    } catch (error) {
+      console.error('[WorkTracking] Error checking task status:', error);
+    }
+  };
 
   useEffect(() => {
     // Initialize timeRemaining only for pomodoro mode
     if (mode === 'pomodoro') {
       setTimeRemaining(getCurrentDuration());
+    } else {
+      // For timer mode, set the initial time based on task duration
+      const taskDurationInSeconds = task.duration * 60; // Convert minutes to seconds
+      setTimeElapsed(taskDurationInSeconds - initialTimeElapsed); // Set remaining time
     }
   }, [mode, isBreak, currentSession, pomodoroSettings]);
 
@@ -72,8 +140,16 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
             return newTime;
           });
         } else {
-          // Count up for regular timer
-          setTimeElapsed(prev => prev + 1);
+          // Count down for timer mode
+          setTimeElapsed((prev) => {
+            const newTime = prev - 1;
+            if (newTime <= 0) {
+              handleTaskCompletion();
+              setIsRunning(false);
+              return 0;
+            }
+            return newTime;
+          });
         }
       }, 1000);
     }
@@ -81,36 +157,150 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
     return () => clearInterval(interval);
   }, [isRunning, mode]);
 
-  const handleSessionComplete = () => {
+  useEffect(() => {
+    // Handle app state changes
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (isRunning) {
+        if (nextAppState === 'background') {
+          setBackgroundTime(new Date());
+        } else if (nextAppState === 'active' && backgroundTime) {
+          const now = new Date();
+          const diff = Math.floor((now.getTime() - backgroundTime.getTime()) / 1000);
+          
+          if (mode === 'timer') {
+            setTimeElapsed(prev => prev + diff);
+          } else {
+            setTimeRemaining(prev => Math.max(0, prev - diff));
+          }
+          setBackgroundTime(null);
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [isRunning, backgroundTime, mode]);
+
+  // Check if task is already running when screen mounts
+  useEffect(() => {
+    checkTaskStatus();
+  }, [task.id]);
+
+  useEffect(() => {
+    // Prevent going back when task is running
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isRunning) {
+        Alert.alert(
+          'Task in Progress',
+          'Please stop the task before leaving this screen.',
+          [{ text: 'OK' }]
+        );
+        return true; // Prevent back
+      }
+      return false; // Allow back
+    });
+
+    return () => backHandler.remove();
+  }, [isRunning]);
+
+  // Calculate required Pomodoro sessions when mode changes or settings update
+  useEffect(() => {
+    if (mode === 'pomodoro') {
+      // Calculate how many full Pomodoro work sessions are needed
+      const taskMinutes = task.duration;
+      const workMinutes = pomodoroSettings.workDuration;
+      const requiredSessions = Math.ceil(taskMinutes / workMinutes);
+      setTotalRequiredSessions(requiredSessions);
+      
+      console.log(`Task duration: ${taskMinutes} minutes`);
+      console.log(`Work session duration: ${workMinutes} minutes`);
+      console.log(`Required Pomodoro sessions: ${requiredSessions}`);
+      
+      // Reset current session if needed
+      if (currentSession > requiredSessions) {
+        setCurrentSession(1);
+      }
+    }
+  }, [mode, pomodoroSettings.workDuration, task.duration]);
+
+  useEffect(() => {
+    // Add a small delay to ensure the native modules are ready
+    const timer = setTimeout(() => {
+      try {
+        initializeSound();
+      } catch (error) {
+        console.error('Error initializing sound:', error);
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleSessionComplete = async () => {
     setIsRunning(false);
 
     if (mode === 'pomodoro') {
       if (isBreak) {
         setIsBreak(false);
-        setCurrentSession(prev => prev + 1);
-        Alert.alert('Break Complete', 'Ready to start working?', [
-          { 
-            text: 'Start', 
-            onPress: () => {
-              setTimeRemaining(pomodoroSettings.workDuration * 60);
-              setIsRunning(true);
+        const nextSession = currentSession + 1;
+        
+        // Check if we've completed all required sessions
+        if (nextSession > totalRequiredSessions) {
+          playSound('complete');
+          Alert.alert(
+            'Task Complete',
+            'You have completed all required Pomodoro sessions for this task!',
+            [
+              { 
+                text: 'Complete Task', 
+                onPress: () => handleTaskCompletion()
+              },
+              {
+                text: 'Add Session',
+                onPress: () => {
+                  setCurrentSession(nextSession);
+                  setTimeRemaining(pomodoroSettings.workDuration * 60);
+                  setIsRunning(true);
+                  playSound('work');
+                }
+              }
+            ]
+          );
+        } else {
+          setCurrentSession(nextSession);
+          playSound('work');
+          Alert.alert('Break Complete', 'Ready to start working?', [
+            { 
+              text: 'Start', 
+              onPress: () => {
+                setTimeRemaining(pomodoroSettings.workDuration * 60);
+                setIsRunning(true);
+              }
             }
-          }
-        ]);
+          ]);
+        }
       } else {
         setIsBreak(true);
-        const breakDuration = currentSession % pomodoroSettings.sessionsBeforeLongBreak === 0
+        const isLongBreak = currentSession % pomodoroSettings.sessionsBeforeLongBreak === 0;
+        const breakDuration = isLongBreak
           ? pomodoroSettings.longBreakDuration
           : pomodoroSettings.shortBreakDuration;
-        Alert.alert('Work Session Complete', 'Time for a break!', [
-          { 
-            text: 'Start Break', 
-            onPress: () => {
-              setTimeRemaining(breakDuration * 60);
-              setIsRunning(true);
+
+        playSound('break');
+        Alert.alert(
+          'Work Session Complete', 
+          `Time for a ${isLongBreak ? 'long' : 'short'} break!`,
+          [
+            { 
+              text: 'Start Break', 
+              onPress: () => {
+                setTimeRemaining(breakDuration * 60);
+                setIsRunning(true);
+              }
             }
-          }
-        ]);
+          ]
+        );
       }
     }
   };
@@ -121,9 +311,52 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleComplete = (duration: number) => {
-    // Handle completion
-    navigation.goBack();
+  const handlePlayPause = async () => {
+    try {
+      if (!isRunning) {
+        console.log('[WorkTracking] Starting tracking for task:', task);
+        await AppLockModule.setAppLockingEnabled(true);
+        await TimerModule.startForegroundService(
+          task.id.toString(),
+          task.title,
+          task.description || 'Task in progress'
+        );
+        setIsRunning(true);
+        
+        // Play start sound
+        if (mode === 'timer') {
+          playSound('start');
+        } else {
+          playSound('work');
+        }
+        
+        console.log('[WorkTracking] Service started successfully');
+      } else {
+        console.log('[WorkTracking] Stopping tracking');
+        await TimerModule.stopForegroundService();
+        await AppLockModule.setAppLockingEnabled(false);
+        setIsRunning(false);
+        
+        // Play stop sound
+        if (mode === 'timer') {
+          playSound('stop');
+        }
+        
+        console.log('[WorkTracking] Service stopped successfully');
+      }
+    } catch (error) {
+      console.error('[WorkTracking] Error toggling task:', error);
+    }
+  };
+
+  const handleComplete = async (duration: number) => {
+    try {
+      await completeTask();
+      setIsRunning(false);
+      navigation.goBack();
+    } catch (error) {
+      console.error('Error completing task:', error);
+    }
   };
 
   const handleModeChange = (newMode: WorkMode) => {
@@ -178,6 +411,7 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
 
   const confirmTaskCompletion = async () => {
     try {
+      await completeTask();
       if (task.type === 'routine' && task.routineId && task.subRoutineId) {
         // Handle activity completion
         await routineService.updateActivityStatus(
@@ -228,6 +462,37 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
     }
   };
 
+  const completeTask = async () => {
+    try {
+      await AppLockModule.setAppLockingEnabled(false);
+      // Your existing task completion logic
+    } catch (error) {
+      console.error('Error disabling app lock:', error);
+    }
+  };
+
+  // Add this function to calculate optimal Pomodoro settings
+  const calculateOptimalPomodoroSettings = (taskDuration: number) => {
+    // Standard Pomodoro is 25 minutes, but we'll adjust based on task duration
+    let workDuration = 25;
+    
+    // For very short tasks (less than 30 mins), use shorter sessions
+    if (taskDuration <= 30) {
+      workDuration = Math.max(10, Math.floor(taskDuration / 2));
+    } 
+    // For longer tasks, try to keep total sessions between 2-4
+    else if (taskDuration <= 120) {
+      workDuration = Math.max(25, Math.floor(taskDuration / 3));
+    }
+
+    return {
+      workDuration,
+      shortBreakDuration: Math.max(3, Math.floor(workDuration * 0.2)), // 20% of work duration
+      longBreakDuration: Math.max(15, Math.floor(workDuration * 0.5)), // 50% of work duration
+      sessionsBeforeLongBreak: Math.max(2, Math.min(4, Math.ceil(taskDuration / workDuration))),
+    };
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
@@ -259,18 +524,27 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
         <View style={styles.timerSection}>
           <CircularTimer
             duration={getCurrentDuration()}
-            elapsed={mode === 'pomodoro' ? getCurrentDuration() - timeRemaining : timeElapsed}
+            elapsed={mode === 'pomodoro' 
+              ? getCurrentDuration() - timeRemaining 
+              : task.duration * 60 - timeElapsed}
             size={280}
             strokeWidth={20}
             isBreak={isBreak}
           >
             <Text style={styles.timer}>
-              {mode === 'pomodoro' ? formatTime(timeRemaining) : formatTime(timeElapsed)}
+              {mode === 'pomodoro' 
+                ? formatTime(timeRemaining)
+                : formatTime(timeElapsed)}
             </Text>
             {mode === 'pomodoro' && (
-              <Text style={styles.sessionInfo}>
-                Session {currentSession} - {isBreak ? 'Break' : 'Work'}
-              </Text>
+              <>
+                <Text style={styles.sessionInfo}>
+                  Session {currentSession} of {totalRequiredSessions}
+                </Text>
+                <Text style={styles.sessionType}>
+                  {isBreak ? 'Break' : 'Work'}
+                </Text>
+              </>
             )}
           </CircularTimer>
         </View>
@@ -279,7 +553,7 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
         <View style={styles.controlSection}>
           <TouchableOpacity 
             style={[styles.controlButton, isRunning ? styles.pauseButton : styles.playButton]}
-            onPress={() => setIsRunning(!isRunning)}
+            onPress={handlePlayPause}
           >
             <Icon 
               name={isRunning ? 'pause' : 'play-arrow'} 
@@ -327,8 +601,27 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Pomodoro Settings</Text>
             
+            <Text style={styles.taskDurationInfo}>
+              Task Duration: {task.duration} minutes
+            </Text>
+            
             <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Work Duration (minutes)</Text>
+              <View style={styles.settingHeader}>
+                <Text style={styles.settingLabel}>Work Duration (minutes)</Text>
+                <TouchableOpacity 
+                  onPress={() => {
+                    const optimal = calculateOptimalPomodoroSettings(task.duration);
+                    setPomodoroSettings(prev => ({
+                      ...prev,
+                      workDuration: optimal.workDuration
+                    }));
+                  }}
+                >
+                  <Text style={styles.suggestedValue}>
+                    Suggested: {calculateOptimalPomodoroSettings(task.duration).workDuration}
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <TextInput
                 style={styles.settingInput}
                 value={pomodoroSettings.workDuration.toString()}
@@ -341,7 +634,22 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
             </View>
 
             <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Short Break (minutes)</Text>
+              <View style={styles.settingHeader}>
+                <Text style={styles.settingLabel}>Short Break (minutes)</Text>
+                <TouchableOpacity 
+                  onPress={() => {
+                    const optimal = calculateOptimalPomodoroSettings(task.duration);
+                    setPomodoroSettings(prev => ({
+                      ...prev,
+                      shortBreakDuration: optimal.shortBreakDuration
+                    }));
+                  }}
+                >
+                  <Text style={styles.suggestedValue}>
+                    Suggested: {calculateOptimalPomodoroSettings(task.duration).shortBreakDuration}
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <TextInput
                 style={styles.settingInput}
                 value={pomodoroSettings.shortBreakDuration.toString()}
@@ -354,7 +662,22 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
             </View>
 
             <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Long Break (minutes)</Text>
+              <View style={styles.settingHeader}>
+                <Text style={styles.settingLabel}>Long Break (minutes)</Text>
+                <TouchableOpacity 
+                  onPress={() => {
+                    const optimal = calculateOptimalPomodoroSettings(task.duration);
+                    setPomodoroSettings(prev => ({
+                      ...prev,
+                      longBreakDuration: optimal.longBreakDuration
+                    }));
+                  }}
+                >
+                  <Text style={styles.suggestedValue}>
+                    Suggested: {calculateOptimalPomodoroSettings(task.duration).longBreakDuration}
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <TextInput
                 style={styles.settingInput}
                 value={pomodoroSettings.longBreakDuration.toString()}
@@ -367,7 +690,22 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
             </View>
 
             <View style={styles.settingItem}>
-              <Text style={styles.settingLabel}>Sessions before Long Break</Text>
+              <View style={styles.settingHeader}>
+                <Text style={styles.settingLabel}>Sessions before Long Break</Text>
+                <TouchableOpacity 
+                  onPress={() => {
+                    const optimal = calculateOptimalPomodoroSettings(task.duration);
+                    setPomodoroSettings(prev => ({
+                      ...prev,
+                      sessionsBeforeLongBreak: optimal.sessionsBeforeLongBreak
+                    }));
+                  }}
+                >
+                  <Text style={styles.suggestedValue}>
+                    Suggested: {calculateOptimalPomodoroSettings(task.duration).sessionsBeforeLongBreak}
+                  </Text>
+                </TouchableOpacity>
+              </View>
               <TextInput
                 style={styles.settingInput}
                 value={pomodoroSettings.sessionsBeforeLongBreak.toString()}
@@ -378,6 +716,15 @@ const WorkTrackingScreen = ({ route, navigation }: Props) => {
                 keyboardType="number-pad"
               />
             </View>
+
+            <TouchableOpacity 
+              style={styles.useOptimalButton}
+              onPress={() => {
+                setPomodoroSettings(calculateOptimalPomodoroSettings(task.duration));
+              }}
+            >
+              <Text style={styles.useOptimalButtonText}>Use Suggested Values</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity 
               style={styles.saveButton}
@@ -473,6 +820,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#BDE3FF',
     marginTop: 8,
+  },
+  sessionType: {
+    fontSize: 16,
+    color: '#BDE3FF',
+    marginTop: 4,
+    opacity: 0.8,
   },
   controlSection: {
     flexDirection: 'row',
@@ -672,6 +1025,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  taskDurationInfo: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  settingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  suggestedValue: {
+    fontSize: 14,
+    color: '#007AFF',
+  },
+  useOptimalButton: {
+    backgroundColor: '#E8F0FE',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  useOptimalButtonText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

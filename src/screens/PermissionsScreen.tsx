@@ -19,16 +19,19 @@ const PermissionsScreen = () => {
   const [permissions, setPermissions] = useState({
     accessibility: false,
     usageStats: false,
+    overlay: false,
   });
 
   const checkPermissions = async () => {
     try {
       const accessibilityEnabled = await AppLockModule.isAccessibilityServiceEnabled();
       const usageStatsEnabled = await AppLockModule.isUsageStatsPermissionGranted();
+      const overlayEnabled = await AppLockModule.canDrawOverlays();
 
       setPermissions({
         accessibility: accessibilityEnabled,
         usageStats: usageStatsEnabled,
+        overlay: overlayEnabled,
       });
     } catch (error) {
       console.error('Error checking permissions:', error);
@@ -60,6 +63,16 @@ const PermissionsScreen = () => {
         await AppLockModule.openUsageAccessSettings();
       } catch (error) {
         console.error('Error opening usage access settings:', error);
+      }
+    }
+  };
+
+  const openOverlaySettings = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        await AppLockModule.openOverlaySettings();
+      } catch (error) {
+        console.error('Error opening overlay settings:', error);
       }
     }
   };
@@ -123,6 +136,13 @@ const PermissionsScreen = () => {
           'Required to detect which apps are being used',
           permissions.usageStats,
           openUsageAccess
+        )}
+
+        {renderPermissionItem(
+          'Display over Other Apps',
+          'Required to show lock screen over other apps',
+          permissions.overlay,
+          openOverlaySettings
         )}
 
         <Text style={styles.note}>

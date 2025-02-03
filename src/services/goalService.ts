@@ -2,11 +2,13 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LifeGoal, SubGoal } from '../types/goals';
 
-interface SubGoalRequestData {
+export interface SubGoalRequestData {
   title: string;
   description: string;
   completed: boolean;
   progress: number;
+  start_date?: string | null;
+  end_date?: string | null;
   due_date: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -14,6 +16,24 @@ interface SubGoalRequestData {
   is_temporary: boolean;
   parent_id: number | null;
   parent_type: string | null;
+  priority: string;
+  color?: string;
+  icon?: string;
+}
+
+interface GoalRequestData {
+  title: string;
+  description?: string;
+  category: string;
+  priority: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  duration?: number;
+  is_temporary?: boolean;
+  color?: string;
+  icon?: string;
 }
 
 // const API_URL = 'http://10.0.2.2:8000/api';
@@ -43,12 +63,29 @@ api.interceptors.request.use(
 );
 
 export const goalService = {
-  createGoal: async (goal: Partial<LifeGoal>): Promise<LifeGoal> => {
+  createGoal: async (goal: Partial<GoalRequestData>): Promise<LifeGoal> => {
     try {
-      const response = await api.post('/goals', goal);
+      console.log('Creating goal with data:', goal);
+      const response = await api.post('/goals', {
+        title: goal.title,
+        description: goal.description || '',
+        category: goal.category,
+        priority: goal.priority,
+        start_time: goal.start_time || null,
+        end_time: goal.end_time || null,
+        start_date: goal.start_date || null,
+        end_date: goal.end_date || null,
+        duration: goal.duration || 0,
+        is_temporary: goal.is_temporary || false,
+        color: goal.color,
+        icon: goal.icon
+      });
       return response.data;
     } catch (error) {
       console.error('Error creating goal:', error);
+      if (axios.isAxiosError(error) && error.response) {
+        console.error('Server response:', error.response.data);
+      }
       throw error;
     }
   },

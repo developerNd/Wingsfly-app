@@ -18,6 +18,8 @@ const SettingsScreen = () => {
     { id: 6, title: 'About', icon: 'info-outline' },
     { id: 7, title: 'App Lock', icon: 'lock-outline' },
     { id: 8, title: 'Permissions', icon: 'admin-panel-settings' },
+    { id: 9, title: 'Schedule Lock', icon: 'schedule' },
+    { id: 10, title: 'Schedule Unlock', icon: 'lock-open' },
   ];
 
   const handleLogout = async () => {
@@ -36,6 +38,12 @@ const SettingsScreen = () => {
         break;
       case 8:
         navigation.navigate('Permissions');
+        break;
+      case 9:
+        navigation.navigate('ScheduleLock');
+        break;
+      case 10:
+        navigation.navigate('ScheduleUnlock');
         break;
       // ... handle other options
     }

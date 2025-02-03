@@ -16,6 +16,8 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { LifeGoal, SubGoal } from '../types/goals';
 import { Routine, Activity } from '../types/routine';
 import { TASK_PRIORITY } from '../data/tasksData';
+import { categories } from '../data/categories';
+import { handleApiError } from '../utils/errorHandling';
 
 const AVAILABLE_ICONS = [
   'event', 'work', 'school', 'fitness-center', 'local-library',
@@ -34,17 +36,20 @@ const PRIORITY_COLORS = {
   [TASK_PRIORITY.LOW]: '#4CAF50',
 };
 
-type Props = {
+interface Props {
   visible: boolean;
   onClose: () => void;
-  onSave: (goal: Partial<LifeGoal | SubGoal | Routine | Activity>) => void;
+  onSave: (newGoal: Partial<LifeGoal>) => void;
+  categories: Array<{ id: string; name: string; icon: string; color: string; }>;
+  loading: boolean;
   isSubGoal?: boolean;
-  isSubRoutine?: boolean;
-  isActivity?: boolean;
   isRoutine?: boolean;
+  isActivity?: boolean;
   parentColor?: string;
-  loading?: boolean;
-};
+  requireCategory?: boolean;
+  requirePriority?: boolean;
+  validateTime?: boolean;
+}
 
 const AddTemporaryGoalModal = ({ 
   visible, 
@@ -54,7 +59,11 @@ const AddTemporaryGoalModal = ({
   isRoutine,
   isActivity,
   parentColor, 
-  loading 
+  loading,
+  categories = [],
+  requireCategory = false,
+  requirePriority = false,
+  validateTime = false
 }: Props) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -69,42 +78,73 @@ const AddTemporaryGoalModal = ({
   const [showStartTime, setShowStartTime] = useState(false);
   const [showEndTime, setShowEndTime] = useState(false);
   const [priority, setPriority] = useState(TASK_PRIORITY.MEDIUM);
+  const [category, setCategory] = useState('');
+  const [errors, setErrors] = useState<{[key: string]: string}>({});
 
-  const handleSave = () => {
-    if (isActivity) {
-      const newItem: Partial<Activity> = {
-        title,
-        description,
-        scheduled_time: startTime ? startTime.toTimeString().split(' ')[0] : undefined,
-        duration: startTime && endTime ? Math.floor((endTime.getTime() - startTime.getTime()) / 60000) : 0,
+  const handleSave = async () => {
+    try {
+      const newErrors: {[key: string]: string} = {};
+      
+      if (!title.trim()) {
+        newErrors.title = 'Title is required';
+      }
+      if (requireCategory && !category) {
+        newErrors.category = 'Category is required';
+      }
+      if (requirePriority && !priority) {
+        newErrors.priority = 'Priority is required';
+      }
+
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        return;
+      }
+
+      const newGoal = {
+        title: title.trim(),
+        description: description.trim(),
+        category,
         priority,
+        color: categories.find(c => c.id === category)?.color || '#1A2980',
+        icon: categories.find(c => c.id === category)?.icon || 'star',
+        start_time: startTime?.toLocaleTimeString(),
+        end_time: endTime?.toLocaleTimeString(),
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+        duration: startTime && endTime ? 
+          Math.floor((endTime.getTime() - startTime.getTime()) / 60000) : 0,
+        is_temporary: false
       };
-      onSave(newItem);
-    } else {
-      const newItem: Partial<LifeGoal | SubGoal | Routine> = {
-        title,
-        description,
-        progress: 0,
-        ...(isSubGoal ? {} : {
-          color: selectedColor,
-          icon: selectedIcon,
-        }),
-        isTemporary: true,
-        dueDate: startDate ? startDate.toISOString().split('T')[0] : undefined,
-        startTime: startTime ? startTime.toTimeString().split(' ')[0] : undefined,
-        endTime: endTime ? endTime.toTimeString().split(' ')[0] : undefined,
-        duration: startTime && endTime ? Math.floor((endTime.getTime() - startTime.getTime()) / 60000) : undefined,
-        priority,
-        ...(isRoutine ? {
-          totalSubRoutines: 0,
-        } : {
-          subGoals: [],
-        }),
-      };
-      onSave(newItem);
+      
+      console.log('Submitting goal:', newGoal);
+      await onSave(newGoal);
+      onClose();
+      resetForm();
+    } catch (error) {
+      console.error('Save error:', error);
+      const errorMessage = handleApiError(error, 'Failed to save goal');
+      setErrors(prev => ({
+        ...prev,
+        submit: errorMessage
+      }));
     }
-    onClose();
-    resetForm();
+  };
+
+  const validateForm = () => {
+    const newErrors: {[key: string]: string} = {};
+    
+    if (!title.trim()) {
+      newErrors.title = 'Title is required';
+    }
+    if (!description.trim()) {
+      newErrors.description = 'Description is required';
+    }
+    if (!category) {
+      newErrors.category = 'Category is required';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
 
   const resetForm = () => {
@@ -326,6 +366,31 @@ const AddTemporaryGoalModal = ({
               </>
             )}
 
+            <View style={styles.categorySelector}>
+              <Text style={styles.inputLabel}>Category</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {categories.map(cat => (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[
+                      styles.categoryChip,
+                      category === cat.id && styles.selectedCategoryChip,
+                      { borderColor: cat.color }
+                    ]}
+                    onPress={() => setCategory(cat.id)}
+                  >
+                    <Icon name={cat.icon} size={16} color={category === cat.id ? '#FFF' : cat.color} />
+                    <Text style={[
+                      styles.categoryText,
+                      category === cat.id && styles.selectedCategoryText,
+                      { color: category === cat.id ? '#FFF' : cat.color }
+                    ]}>{cat.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {errors.category && <Text style={styles.errorText}>{errors.category}</Text>}
+            </View>
+
             {(showStartDate || showEndDate || showStartTime || showEndTime) && (
               <DateTimePicker
                 testID="dateTimePicker"
@@ -339,6 +404,10 @@ const AddTemporaryGoalModal = ({
                 onChange={onDateChange}
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
               />
+            )}
+
+            {errors.submit && (
+              <Text style={styles.errorText}>{errors.submit}</Text>
             )}
 
             <TouchableOpacity 
@@ -517,6 +586,48 @@ const styles = StyleSheet.create({
   },
   priorityTextSelected: {
     color: '#FFF',
+  },
+  categorySelector: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 8,
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(26, 41, 128, 0.1)',
+    marginRight: 8,
+    gap: 6,
+  },
+  selectedCategoryChip: {
+    backgroundColor: '#1A2980',
+  },
+  categoryText: {
+    fontSize: 14,
+    color: '#1A2980',
+    fontFamily: 'Poppins-Medium',
+  },
+  selectedCategoryText: {
+    color: '#FFF',
+  },
+  errorText: {
+    color: '#FF4444',
+    fontSize: 14,
+    marginTop: 8,
+  },
+  dateInput: {
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    marginTop: 8,
   },
 });
 

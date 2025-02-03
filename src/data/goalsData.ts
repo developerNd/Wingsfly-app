@@ -1,16 +1,25 @@
-export type SubGoal = {
-  id: number;
-  title: string;
-  completed: boolean;
-  dueDate?: string;
-  startTime?: string;
-  endTime?: string;
-  duration?: number;
-  description?: string;
-  subGoals?: SubGoal[];
-  progress: number;
-  isTemporary?: boolean;
-};
+import { SubGoal, LifeGoal } from '../types/goals';
+
+export const subGoals: SubGoal[] = [
+  {
+    id: 1,
+    title: "...",
+    description: "...",
+    completed: false,
+    progress: 0,
+    dueDate: undefined,
+    startTime: undefined,
+    endTime: undefined,
+    startDate: undefined,
+    endDate: undefined,
+    duration: 0,
+    isTemporary: false,
+    priority: 'MEDIUM',
+    color: '#1A2980',
+    icon: 'star'
+  },
+  // ... other subgoals
+];
 
 export type LifeGoal = {
   id: number;

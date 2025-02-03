@@ -12,6 +12,12 @@ import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
 import com.wingsfly.AppLockPackage
+import com.facebook.react.bridge.NativeModule
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReactContextBaseJavaModule
+import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.Promise
+import com.facebook.react.uimanager.ViewManager
 
 class MainApplication : Application(), ReactApplication {
 
@@ -24,6 +30,15 @@ class MainApplication : Application(), ReactApplication {
               // Packages that cannot be autolinked yet can be added manually here, for example:
               // add(MyReactNativePackage())
               add(AppLockPackage())
+              add(object : ReactPackage {
+                override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
+                  return listOf(TimerModule(reactContext))
+                }
+
+                override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
+                  return emptyList()
+                }
+              })
             }
 
         override fun getJSMainModuleName(): String = "index"
